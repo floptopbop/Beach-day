@@ -1,13 +1,15 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
-<title>ASCII TrueColor Ocean Sandbox (Optimized)</title>
+    <meta charset="utf-8">
+    <title>ASCII TrueColor Ocean Sandbox (Debugged)</title>
+</head>
+<body>
 <style>
     html, body {
-        margin: 10;
-        padding: 10;
-        background: #ffffff;
+        margin: 0;
+        padding: 0;
+        background: #020202;  /* match canvas background to hide any tiny gaps */
         overflow: hidden;
         width: 100vw;
         height: 100vh;
@@ -16,11 +18,10 @@
         display: block;
         width: 100vw;
         height: 100vh;
-       filter: Brightness(7.5);         Contrast:(1);
-}
+        filter: brightness(2);
+        /* removed broken filter – it was making the image nearly white */
+    }
 </style>
-</head>
-<body>
 
 <canvas id="simulationCanvas"></canvas>
 
@@ -31,27 +32,24 @@
 const CFG = {
     fontSize: 10,
     fontFamily: "monospace",
-    shorelineRatio: 0.30,   
-    pierXRatio: 0.7,       
-    pierLengthRatio: 0.80,   
-    rainIntensity: 0.001,    
-    
+    shorelineRatio: 0.30,
+    pierXRatio: 0.7,
+    pierLengthRatio: 0.80,
+    rainIntensity: 0.001,
+
     // TrueColor Palette Defs
-    colorBg:      "#020202", 
+    colorBg:      "#020202",
     colorDrySand: "#c2a678",
     colorWetSand: "#292522",
     colorWater:   "#7DB5E5",
     colorRipple:  "#64dfdf",
     colorFoam:    "#ffffff",
-    colorPier:    "#DF4231"  
+    colorPier:    "#DF4231"
 };
 
 // =====================================================================
-// 2. RECYCLED MEMORY ALLOCATION
+// 2. MEASURE CHARACTER DIMENSIONS (now once, remains valid after resize)
 // =====================================================================
-const canvas = document.getElementById("simulationCanvas");
-const ctx = canvas.getContext("2d", { alpha: false }); // Disable alpha channel for faster blending
-
 const tester = document.createElement("span");
 tester.style.fontFamily = CFG.fontFamily;
 tester.style.fontSize = `${CFG.fontSize}px`;
@@ -66,21 +64,29 @@ const charW = rect.width;
 const charH = rect.height;
 document.body.removeChild(tester);
 
+// =====================================================================
+// 3. GRID & BUFFERS (re‑allocated on resize)
+// =====================================================================
+const canvas = document.getElementById("simulationCanvas");
+const ctx = canvas.getContext("2d", { alpha: false });
+
 let W, H;
 let current = [];
 let previous = [];
-let nextBuffer = []; // Static third layer to prevent Garbage Collection overhead
+let nextBuffer = [];
 
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    W = Math.floor(canvas.width / charW) - 1;
-    H = Math.floor(canvas.height / charH) - 1;
-    
+
+    // Use the full screen – only floor, no -1 subtraction
+    W = Math.floor(canvas.width / charW);
+    H = Math.floor(canvas.height / charH);
+
     current = [];
     previous = [];
     nextBuffer = [];
-    for(let y=0; y<H; y++){
+    for (let y = 0; y < H; y++) {
         current[y] = new Float32Array(W);
         previous[y] = new Float32Array(W);
         nextBuffer[y] = new Float32Array(W);
@@ -91,38 +97,40 @@ resize();
 const chars = "·░.◦▓◌○◍◉●";
 
 // =====================================================================
-// 3. ZERO-ALLOCATION WAVE PHYSICS ENGINE
+// 4. WAVE PHYSICS (zero allocation, pointer swap)
 // =====================================================================
 function ripple() {
     const shoreY = Math.floor(H * CFG.shorelineRatio);
     const pierX = Math.floor(W * CFG.pierXRatio);
     const pierLength = Math.floor(H * CFG.pierLengthRatio);
 
-    for(let y=1; y<H-1; y++){
+    for (let y = 1; y < H - 1; y++) {
         const cRow = current[y];
-        const cAbove = current[y-1];
-        const cBelow = current[y+1];
+        const cAbove = current[y - 1];
+        const cBelow = current[y + 1];
         const pRow = previous[y];
         const nRow = nextBuffer[y];
-        
+
         const isSand = y < shoreY;
         const divisor = isSand ? 3.8 : 2.2;
         const damping = isSand ? 0.48 : 0.975;
 
-        for(let x=1; x<W-1; x++){
+        for (let x = 1; x < W - 1; x++) {
+            // Pier columns stay fixed
             if (x === pierX && y < pierLength && y % 3 === 0) {
                 nRow[x] = 0;
                 continue;
             }
 
-            let combinedNeighbors = (cAbove[x] + cBelow[x] + cRow[x-1] + cRow[x+1]) / divisor;
+            let combinedNeighbors =
+                (cAbove[x] + cBelow[x] + cRow[x - 1] + cRow[x + 1]) / divisor;
             let val = (combinedNeighbors - pRow[x]) * damping;
 
-            // Handle edge dampening limits natively without outer logic checks
+            // Edge damping for water area
             if (!isSand && (x < 6 || x > W - 6 || y > H - 6)) {
-                let edgeX = Math.min(x, W - 1 - x);
-                let edgeY = Math.min(y, H - 1 - y);
-                let closestEdge = Math.min(edgeX, edgeY);
+                const edgeX = Math.min(x, W - 1 - x);
+                const edgeY = Math.min(y, H - 1 - y);
+                const closestEdge = Math.min(edgeX, edgeY);
                 if (closestEdge < 8) {
                     val *= (0.85 + (closestEdge / 6) * 0.15);
                 }
@@ -132,15 +140,15 @@ function ripple() {
         }
     }
 
-    // Pointer Swap Ring: cycle references instantly without allocation
-    let temp = previous;
+    // Pointer swap – avoids creating new arrays
+    const temp = previous;
     previous = current;
     current = nextBuffer;
     nextBuffer = temp;
 }
 
 // =====================================================================
-// 4. HORIZONTAL STRINGS RUN-LENGTH RASTERIZER
+// 5. RUN‑LENGTH RASTERIZER (fast horizontal drawing)
 // =====================================================================
 function render() {
     ctx.fillStyle = CFG.colorBg;
@@ -153,7 +161,7 @@ function render() {
     const pierX = Math.floor(W * CFG.pierXRatio);
     const pierLength = Math.floor(H * CFG.pierLengthRatio);
 
-    for(let y=0; y<H; y++){
+    for (let y = 0; y < H; y++) {
         const cRow = current[y];
         const isSand = y < shoreY;
 
@@ -161,7 +169,7 @@ function render() {
         let runColor = "";
         let runStartX = 0;
 
-        for(let x=0; x<W; x++){
+        for (let x = 0; x < W; x++) {
             let char = "∷";
             let color = CFG.colorWater;
 
@@ -169,22 +177,22 @@ function render() {
                 char = "⊗";
                 color = CFG.colorPier;
             } else {
-                let v = cRow[x];
-                let normalized = Math.max(-1, Math.min(1, v / 6));
-let idx = Math.floor(
-    Math.pow(Math.abs(normalized), 0.65) *
-    (chars.length - 1)
-);
-                if (idx < 0) idx = 0; else if (idx > chars.length - 1) idx = chars.length - 1;
+                const v = cRow[x];
+                const normalized = Math.max(-1, Math.min(1, v / 6));
+                let idx = Math.floor(
+                    Math.pow(Math.abs(normalized), 0.65) * (chars.length - 1)
+                );
+                if (idx < 0) idx = 0;
+                if (idx > chars.length - 1) idx = chars.length - 1;
                 char = chars[idx];
 
                 if (isSand) {
-                    if (v > 1.2) { color = CFG.colorFoam; char = "◌"; }
-                    else if (v > 0.2) { color = CFG.colorWetSand; char = "░"; }
-                    else { color = CFG.colorDrySand; char = "░"; }
+                    if (v > 1.2)       { color = CFG.colorFoam;    char = "◌"; }
+                    else if (v > 0.2)  { color = CFG.colorWetSand; char = "░"; }
+                    else               { color = CFG.colorDrySand; char = "░"; }
                 } else {
-                    if (v > 2.5) color = CFG.colorFoam;
-                    else if (v > 0.3 || v < -0.3) color = CFG.colorRipple;
+                    if (v > 2.5)                 { color = CFG.colorFoam; }
+                    else if (v > 0.3 || v < -0.3){ color = CFG.colorRipple; }
                     else {
                         color = CFG.colorWater;
                         if (idx === 2) char = "∙";
@@ -192,7 +200,7 @@ let idx = Math.floor(
                 }
             }
 
-            // Group strings by contiguous matching colors
+            // Run‑length encoding by colour
             if (x === 0) {
                 runColor = color;
                 runString = char;
@@ -207,7 +215,8 @@ let idx = Math.floor(
                 runStartX = x;
             }
         }
-        // Commit remaining trailing sequence across rows
+
+        // Commit the last run of the row
         if (runString.length > 0) {
             ctx.fillStyle = runColor;
             ctx.fillText(runString, runStartX * charW, y * charH);
@@ -216,12 +225,13 @@ let idx = Math.floor(
 }
 
 // =====================================================================
-// 5. ANIMATION & GESTURES
+// 6. ANIMATION & INTERACTION
 // =====================================================================
 function animate() {
+    // Random rain drops
     if (Math.random() < CFG.rainIntensity) {
-        let rx = Math.floor(Math.random() * (W - 2)) + 1;
-        let ry = Math.floor(Math.random() * (H - 2)) + 1;
+        const rx = Math.floor(Math.random() * (W - 2)) + 1;
+        const ry = Math.floor(Math.random() * (H - 2)) + 1;
         if (ry > Math.floor(H * CFG.shorelineRatio) + 1) {
             current[ry][rx] = 16;
         }
@@ -234,41 +244,41 @@ function animate() {
 
 function splash(cx, cy) {
     const radius = 3;
-    for(let y=-radius; y<=radius; y++){
-        let py = cy + y;
+    for (let y = -radius; y <= radius; y++) {
+        const py = cy + y;
         if (py <= 0 || py >= H - 1) continue;
         const cRow = current[py];
-        for(let x=-radius; x<=radius; x++){
-            let px = cx + x;
-            if(px > 0 && px < W - 1){
-                cRow[px] = 4; 
+        for (let x = -radius; x <= radius; x++) {
+            const px = cx + x;
+            if (px > 0 && px < W - 1) {
+                cRow[px] = 4;
             }
         }
     }
 }
 
 function getGridCoords(e) {
-    let x = Math.floor(e.clientX / window.innerWidth * W);
-    let y = Math.floor(e.clientY / window.innerHeight * H);
-    return {x, y};
+    return {
+        x: Math.floor(e.clientX / window.innerWidth * W),
+        y: Math.floor(e.clientY / window.innerHeight * H)
+    };
 }
 
 document.addEventListener("pointerdown", e => {
-    let coords = getGridCoords(e);
-    splash(coords.x, coords.y);
+    const { x, y } = getGridCoords(e);
+    splash(x, y);
 });
 
 document.addEventListener("pointermove", e => {
-    if(e.buttons){
-        let coords = getGridCoords(e);
-        splash(coords.x, coords.y);
+    if (e.buttons) {
+        const { x, y } = getGridCoords(e);
+        splash(x, y);
     }
 });
 
-window.addEventListener("resize", () => {
-    resize();
-});
+window.addEventListener("resize", resize);
 
+// Start the simulation
 animate();
 </script>
 </body>
