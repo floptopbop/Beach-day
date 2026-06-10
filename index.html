@@ -3,7 +3,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ASCII Ocean – Locked Down</title>
+    <title>ASCII Ocean – Dynamic Foam & Event Horizon</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+
     <style>
         html, body {
             margin: 0;
@@ -12,22 +15,16 @@
             overflow: hidden;
             width: 100%;
             height: 100%;
-            overscroll-behavior: none;   /* prevent bounce / pull-to-refresh */
+            filter: brightness(2);
+            overscroll-behavior: none;
             -webkit-overflow-scrolling: auto;
+
+            /* apply VT323 globally */
+            font-family: 'VT323', monospace;
         }
-        canvas {
-            display: block;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            filter: brightness(3);
-            touch-action: none;           /* disables all touch‑based scrolling/zooming */
-            user-select: none;
-            -webkit-user-select: none;
-            -webkit-user-drag: none;
-            -webkit-touch-callout: none;  /* stops iOS callout on long press */
+
+        canvas, pre, div {
+            font-family: inherit;
         }
     </style>
 </head>
@@ -43,7 +40,7 @@
         document.addEventListener('gestureend', e => e.preventDefault());
         document.addEventListener('touchmove', e => {
             if (e.target === canvas || canvas.contains(e.target)) {
-                e.preventDefault(); // only block on the canvas, allow normal scroll elsewhere (none anyway)
+                e.preventDefault(); 
             }
         }, { passive: false });
 
@@ -51,7 +48,7 @@
         // 1. ENGINE CONFIGURATION
         // ================================================================
         const CFG = {
-            fontSize: 4,
+            fontSize: 8,
             fontFamily: "monospace",
             shorelineRatio: 0.30,
             pierXRatio: 0.7,
@@ -85,24 +82,120 @@
 
         let W, H;
         let current = [], previous = [], nextBuffer = [];
+        let foam = [];
+
+        // Global animation trackers for physical events
+let bearFrameCounter = 0;
+let bearEvent = {
+    active: true, // Always alive
+    x: 10,        // Starts right on screen
+    y: 0,
+    targetX: 10,  // Where he is currently heading
+    targetY: 0,
+    vx: 0.3,
+    vy: 0.1,
+    state: "CHILL", // Starts out already looking at the ocean
+    timer: 200      // Time until his next random walk
+};
+
+// Set his initial y position safely based on the shoreline height once it's available
+function initBearPosition() {
+    const shoreY = Math.floor(H * CFG.shorelineRatio);
+    bearEvent.y = shoreY - 2;
+    bearEvent.targetY = shoreY - 2;
+    bearEvent.x = Math.floor(W * 0.2);
+    bearEvent.targetX = bearEvent.x;
+}
+
 
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+
             W = Math.floor(canvas.width / charW);
             H = Math.floor(canvas.height / charH);
+
             current = [];
             previous = [];
             nextBuffer = [];
+            foam = [];
+
             for (let y = 0; y < H; y++) {
                 current[y] = new Float32Array(W);
                 previous[y] = new Float32Array(W);
                 nextBuffer[y] = new Float32Array(W);
+                foam[y] = new Float32Array(W);
             }
         }
         resize();
 
-        const chars = "·░.◦▓◌○◍◉●";
+        const chars = "·°░º▓o0";
+
+function triggerBearAttack() {
+    bearEvent.active = true;
+    bearEvent.x = 2; 
+    bearEvent.y = Math.floor(H * CFG.shorelineRatio) - 3; 
+    bearEvent.state = "WALK";
+    bearEvent.timer = 0;
+    bearFrameCounter = 0;
+}
+function updateBearEvent() {
+    if (!bearEvent.active) return;
+
+    const bx = Math.floor(bearEvent.x);
+    const by = Math.floor(bearEvent.y);
+    const shoreY = Math.floor(H * CFG.shorelineRatio);
+
+    if (bearEvent.state === "CHILL") {
+        bearEvent.timer--;
+        
+        // Ambient breathing/resting ripples while he sits in the tide
+        if (by > 0 && by < H - 1 && bx > 0 && bx < W - 1) {
+            if (bearFrameCounter % 40 === 0) {
+                current[by + 1][bx - 1] = 3; // Soft fluid perturbations at his feet
+                foam[by + 1][bx - 1] = 1.5;
+            }
+        }
+
+        // Timer is up. Time to move somewhere else nearby.
+        if (bearEvent.timer <= 0) {
+            bearEvent.state = "WANDER";
+            // Pick a random new spot along the shoreline zone (+/- 15 blocks left/right)
+            const rangeX = 15;
+            bearEvent.targetX = Math.max(3, Math.min(W - 4, bx + (Math.random() * (rangeX * 2) - rangeX)));
+            // Keep him restricted strictly to the sand/water boundary line
+            bearEvent.targetY = shoreY + Math.floor(Math.random() * 3 - 2); 
+        }
+    } 
+    else if (bearEvent.state === "WANDER") {
+        // Calculate direction vectors to target spot
+        const dx = bearEvent.targetX - bearEvent.x;
+        const dy = bearEvent.targetY - bearEvent.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > 0.5) {
+            // Step toward the target coordinate
+            bearEvent.x += (dx / distance) * bearEvent.vx;
+            bearEvent.y += (dy / distance) * bearEvent.vy;
+
+            // Generate walking displacement tracks in the wave matrices
+            if (by > 1 && by < H - 2 && bx > 2 && bx < W - 2) {
+                if (bearFrameCounter % 4 === 0) {
+                    current[by][bx] = 6;
+                    foam[by][bx - 1] = 4;
+                }
+            }
+        } else {
+            // He arrived. Plop down and look at the ocean again.
+            bearEvent.state = "CHILL";
+            // Sit still for a random duration between 200 and 600 frames (~4 to 12 seconds)
+            bearEvent.timer = 200 + Math.floor(Math.random() * 400);
+        }
+    }
+
+    bearFrameCounter++;
+}
+
 
         function ripple() {
             const shoreY = Math.floor(H * CFG.shorelineRatio);
@@ -112,17 +205,42 @@
             for (let y = 1; y < H - 1; y++) {
                 const cRow = current[y], cAbove = current[y-1], cBelow = current[y+1];
                 const pRow = previous[y], nRow = nextBuffer[y];
+                const fRow = foam[y];
                 const isSand = y < shoreY;
                 const divisor = isSand ? 3.8 : 2.2;
-                const damping = isSand ? 0.48 : 0.975;
+                const damping = isSand ? 0.44 : 0.96;
 
                 for (let x = 1; x < W - 1; x++) {
+                    // Obstacle architecture: Static structural boundary layer
                     if (x === pierX && y < pierLength && y % 3 === 0) {
                         nRow[x] = 0;
+                        // Side currents crashing into the piling convert horizontal force to foam
+                        if (Math.abs(cRow[x-1]) > 0.2 || Math.abs(cRow[x+1]) > 0.2) {
+                            fRow[x] = Math.min(8, fRow[x] + 1.5);
+                        }
                         continue;
                     }
+
                     let combinedNeighbors = (cAbove[x] + cBelow[x] + cRow[x-1] + cRow[x+1]) / divisor;
                     let val = (combinedNeighbors - pRow[x]) * damping;
+              
+                    // --- FOAM INJECTION MODULE ---
+                    // Compute absolute structural velocity delta between steps to find breaking crests
+                    const delta = Math.abs(val - cRow[x]);
+                    if (delta > 0.8) {
+                        fRow[x] += delta * 0.4;
+                    }
+                    
+                    // Natural breaks along the flat shallow sand profile
+                    if (isSand && val > 0.5) {
+                        fRow[x] += 0.3;
+                    }
+
+                    // Persistent decay timeline (Deepwater foam glides; sand layer dampens fast)
+                    fRow[x] *= isSand ? 0.58 : 0.98; 
+                    if (fRow[x] < 0.05) fRow[x] = 0;
+
+                    // Edge dampening math
                     if (!isSand && (x < 6 || x > W - 6 || y > H - 6)) {
                         const edgeX = Math.min(x, W - 1 - x), edgeY = Math.min(y, H - 1 - y);
                         const closestEdge = Math.min(edgeX, edgeY);
@@ -146,34 +264,66 @@
             const shoreY = Math.floor(H * CFG.shorelineRatio);
             const pierX = Math.floor(W * CFG.pierXRatio);
             const pierLength = Math.floor(H * CFG.pierLengthRatio);
+             
+            const bx = Math.floor(bearEvent.x);
+            const by = Math.floor(bearEvent.y);
 
             for (let y = 0; y < H; y++) {
                 const cRow = current[y];
+                const fRow = foam[y];
                 const isSand = y < shoreY;
                 let runString = "", runColor = "", runStartX = 0;
 
                 for (let x = 0; x < W; x++) {
                     let char = "∷", color = CFG.colorWater;
+                    
+                    // Intercept step 1: Is this static pier coordinate architecture?
                     if (x === pierX && y < pierLength && y % 3 === 0) {
                         char = "⊗"; color = CFG.colorPier;
-                    } else {
+                    } 
+                    // Intercept step 2: Is the procedural ASCII entity occupying this spatial grid block?
+                    else if (bearEvent.active && x >= bx - 2 && x <= bx && y >= by && y <= by + 1) {
+                        const localX = x - (bx - 2); 
+                        const localY = y - by;       
+                        const animFrame = Math.floor(bearFrameCounter / 6) % 3;
+
+                        // Integrated 3-frame 3x2 typographic sprite arrays
+                        const frames = [
+                            [ ["(","-","-"], ["/",")","\""] ], 
+                            [ ["(","=","="], ["\\","(","\""] ], 
+                            [ ["{","o","."], ["/",",","*"] ]  
+                        ];
+
+                        char = frames[animFrame][localY][localX];
+                        color = "#a57548"; // Earthy brown cuts through blue fluid data
+                    } 
+                    // Base Map Render Step
+                    else {
                         const v = cRow[x];
+                        const f = fRow[x];
                         const normalized = Math.max(-1, Math.min(1, v / 6));
                         let idx = Math.floor(Math.pow(Math.abs(normalized), 0.65) * (chars.length - 1));
                         idx = Math.max(0, Math.min(idx, chars.length - 1));
                         char = chars[idx];
 
                         if (isSand) {
-                            if (v > 1.2) { color = CFG.colorFoam; char = "◌"; }
-                            else if (v > 0.2) { color = CFG.colorWetSand; char = "░"; }
+                            if (f > 1.8 || v > 1.5) { color = CFG.colorFoam; char = "◌"; }
+                            else if (f > 0.6) { color = CFG.colorFoam; char = "·"; }
+                            else if (v > 0.2 || f > 0.1) { color = CFG.colorWetSand; char = "░"; }
                             else { color = CFG.colorDrySand; char = "░"; }
                         } else {
-                            if (v > 2.5) color = CFG.colorFoam;
-                            else if (v > 0.3 || v < -0.3) color = CFG.colorRipple;
-                            else { color = CFG.colorWater; if (idx === 2) char = "∙"; }
+                            if (f > 2.2) { color = CFG.colorFoam; char = "░"; } 
+                            else if (f > 1.0) { color = CFG.colorFoam; char = "*"; }
+                            else if (f > 0.4) { color = CFG.colorRipple; char = "°"; }
+                            else if (v > 0.3 || v < -0.3) { color = CFG.colorRipple; }
+                            else { 
+                                color = CFG.colorWater; 
+                                if (idx === 2) char = "∙"; 
+                            }
                         }
                     }
 
+                    // Native monospaced run-length canvas draw optimizer
                     if (x === 0) { runColor = color; runString = char; runStartX = 0; }
                     else if (color === runColor) { runString += char; }
                     else {
@@ -192,11 +342,20 @@
         }
 
         function animate() {
+            // Environment context simulation loops
             if (Math.random() < CFG.rainIntensity) {
                 const rx = Math.floor(Math.random() * (W - 2)) + 1;
                 const ry = Math.floor(Math.random() * (H - 2)) + 1;
                 if (ry > Math.floor(H * CFG.shorelineRatio) + 1) current[ry][rx] = 16;
             }
+
+            // Stochastic event trigger loop
+            if (!bearEvent.active && Math.random() < 0.002) {
+                triggerBearAttack();
+            }
+
+            // Run processing updates sequentially
+            updateBearEvent();
             ripple();
             render();
             requestAnimationFrame(animate);
