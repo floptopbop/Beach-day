@@ -2,284 +2,240 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>ASCII TrueColor Ocean Sandbox (Debugged)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ASCII Ocean – Locked Down</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: #020202;
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+            overscroll-behavior: none;   /* prevent bounce / pull-to-refresh */
+            -webkit-overflow-scrolling: auto;
+        }
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            filter: brightness(3);
+            touch-action: none;           /* disables all touch‑based scrolling/zooming */
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-user-drag: none;
+            -webkit-touch-callout: none;  /* stops iOS callout on long press */
+        }
+    </style>
 </head>
 <body>
-<style>
-    html, body {
-        margin: 0;
-        padding: 0;
-        background: #020202;  /* match canvas background to hide any tiny gaps */
-        overflow: hidden;
-        width: 100vw;
-        height: 100vh;
-    }
-    canvas {
-        display: absolute;
-        width: 100vw;
-        height: 100vh;
-        filter: brightness(2);
-        /* removed broken filter – it was making the image nearly white */
-    }
-</style>
+    <canvas id="simulationCanvas"></canvas>
 
-<canvas id="simulationCanvas"></canvas>
-
-<script>
-// =====================================================================
-// 1. ENGINE CONFIGURATION
-// =====================================================================
-const CFG = {
-    fontSize: 10,
-    fontFamily: "monospace",
-    shorelineRatio: 0.30,
-    pierXRatio: 0.7,
-    pierLengthRatio: 0.80,
-    rainIntensity: 0.001,
-
-    // TrueColor Palette Defs
-    colorBg:      "#020202",
-    colorDrySand: "#c2a678",
-    colorWetSand: "#292522",
-    colorWater:   "#7DB5E5",
-    colorRipple:  "#64dfdf",
-    colorFoam:    "#ffffff",
-    colorPier:    "#DF4231"
-};
-
-// =====================================================================
-// 2. MEASURE CHARACTER DIMENSIONS (now once, remains valid after resize)
-// =====================================================================
-const tester = document.createElement("span");
-tester.style.fontFamily = CFG.fontFamily;
-tester.style.fontSize = `${CFG.fontSize}px`;
-tester.style.lineHeight = "1em";
-tester.style.position = "absolute";
-tester.style.visibility = "hidden";
-tester.style.whiteSpace = "pre";
-tester.textContent = "█";
-document.body.appendChild(tester);
-const rect = tester.getBoundingClientRect();
-const charW = rect.width;
-const charH = rect.height;
-document.body.removeChild(tester);
-
-// =====================================================================
-// 3. GRID & BUFFERS (re‑allocated on resize)
-// =====================================================================
-const canvas = document.getElementById("simulationCanvas");
-const ctx = canvas.getContext("2d", { alpha: false });
-
-let W, H;
-let current = [];
-let previous = [];
-let nextBuffer = [];
-
-function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-
-    // Use the full screen – only floor, no -1 subtraction
-    W = Math.floor(canvas.width / charW);
-    H = Math.floor(canvas.height / charH);
-
-    current = [];
-    previous = [];
-    nextBuffer = [];
-    for (let y = 0; y < H; y++) {
-        current[y] = new Float32Array(W);
-        previous[y] = new Float32Array(W);
-        nextBuffer[y] = new Float32Array(W);
-    }
-}
-resize();
-
-const chars = "·░.◦▓◌○◍◉●";
-
-// =====================================================================
-// 4. WAVE PHYSICS (zero allocation, pointer swap)
-// =====================================================================
-function ripple() {
-    const shoreY = Math.floor(H * CFG.shorelineRatio);
-    const pierX = Math.floor(W * CFG.pierXRatio);
-    const pierLength = Math.floor(H * CFG.pierLengthRatio);
-
-    for (let y = 1; y < H - 1; y++) {
-        const cRow = current[y];
-        const cAbove = current[y - 1];
-        const cBelow = current[y + 1];
-        const pRow = previous[y];
-        const nRow = nextBuffer[y];
-
-        const isSand = y < shoreY;
-        const divisor = isSand ? 3.8 : 2.2;
-        const damping = isSand ? 0.48 : 0.975;
-
-        for (let x = 1; x < W - 1; x++) {
-            // Pier columns stay fixed
-            if (x === pierX && y < pierLength && y % 3 === 0) {
-                nRow[x] = 0;
-                continue;
+    <script>
+        // ================================================================
+        // Prevent any gesture / scroll / zoom
+        // ================================================================
+        document.addEventListener('gesturestart', e => e.preventDefault());
+        document.addEventListener('gesturechange', e => e.preventDefault());
+        document.addEventListener('gestureend', e => e.preventDefault());
+        document.addEventListener('touchmove', e => {
+            if (e.target === canvas || canvas.contains(e.target)) {
+                e.preventDefault(); // only block on the canvas, allow normal scroll elsewhere (none anyway)
             }
+        }, { passive: false });
 
-            let combinedNeighbors =
-                (cAbove[x] + cBelow[x] + cRow[x - 1] + cRow[x + 1]) / divisor;
-            let val = (combinedNeighbors - pRow[x]) * damping;
+        // ================================================================
+        // 1. ENGINE CONFIGURATION
+        // ================================================================
+        const CFG = {
+            fontSize: 6,
+            fontFamily: "monospace",
+            shorelineRatio: 0.30,
+            pierXRatio: 0.7,
+            pierLengthRatio: 0.80,
+            rainIntensity: 0.001,
+            colorBg:      "#020202",
+            colorDrySand: "#c2a678",
+            colorWetSand: "#292522",
+            colorWater:   "#7DB5E5",
+            colorRipple:  "#64dfdf",
+            colorFoam:    "#ffffff",
+            colorPier:    "#DF4231"
+        };
 
-            // Edge damping for water area
-            if (!isSand && (x < 6 || x > W - 6 || y > H - 6)) {
-                const edgeX = Math.min(x, W - 1 - x);
-                const edgeY = Math.min(y, H - 1 - y);
-                const closestEdge = Math.min(edgeX, edgeY);
-                if (closestEdge < 8) {
-                    val *= (0.85 + (closestEdge / 6) * 0.15);
+        const tester = document.createElement("span");
+        tester.style.fontFamily = CFG.fontFamily;
+        tester.style.fontSize = `${CFG.fontSize}px`;
+        tester.style.lineHeight = "1em";
+        tester.style.position = "absolute";
+        tester.style.visibility = "hidden";
+        tester.style.whiteSpace = "pre";
+        tester.textContent = "█";
+        document.body.appendChild(tester);
+        const rect = tester.getBoundingClientRect();
+        const charW = rect.width;
+        const charH = rect.height;
+        document.body.removeChild(tester);
+
+        const canvas = document.getElementById("simulationCanvas");
+        const ctx = canvas.getContext("2d", { alpha: false });
+
+        let W, H;
+        let current = [], previous = [], nextBuffer = [];
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            W = Math.floor(canvas.width / charW);
+            H = Math.floor(canvas.height / charH);
+            current = [];
+            previous = [];
+            nextBuffer = [];
+            for (let y = 0; y < H; y++) {
+                current[y] = new Float32Array(W);
+                previous[y] = new Float32Array(W);
+                nextBuffer[y] = new Float32Array(W);
+            }
+        }
+        resize();
+
+        const chars = "·░.◦▓◌○◍◉●";
+
+        function ripple() {
+            const shoreY = Math.floor(H * CFG.shorelineRatio);
+            const pierX = Math.floor(W * CFG.pierXRatio);
+            const pierLength = Math.floor(H * CFG.pierLengthRatio);
+
+            for (let y = 1; y < H - 1; y++) {
+                const cRow = current[y], cAbove = current[y-1], cBelow = current[y+1];
+                const pRow = previous[y], nRow = nextBuffer[y];
+                const isSand = y < shoreY;
+                const divisor = isSand ? 3.8 : 2.2;
+                const damping = isSand ? 0.48 : 0.975;
+
+                for (let x = 1; x < W - 1; x++) {
+                    if (x === pierX && y < pierLength && y % 3 === 0) {
+                        nRow[x] = 0;
+                        continue;
+                    }
+                    let combinedNeighbors = (cAbove[x] + cBelow[x] + cRow[x-1] + cRow[x+1]) / divisor;
+                    let val = (combinedNeighbors - pRow[x]) * damping;
+                    if (!isSand && (x < 6 || x > W - 6 || y > H - 6)) {
+                        const edgeX = Math.min(x, W - 1 - x), edgeY = Math.min(y, H - 1 - y);
+                        const closestEdge = Math.min(edgeX, edgeY);
+                        if (closestEdge < 8) val *= (0.85 + (closestEdge / 6) * 0.15);
+                    }
+                    nRow[x] = val;
                 }
             }
-
-            nRow[x] = val;
+            const temp = previous;
+            previous = current;
+            current = nextBuffer;
+            nextBuffer = temp;
         }
-    }
 
-    // Pointer swap – avoids creating new arrays
-    const temp = previous;
-    previous = current;
-    current = nextBuffer;
-    nextBuffer = temp;
-}
+        function render() {
+            ctx.fillStyle = CFG.colorBg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.font = `${CFG.fontSize}px ${CFG.fontFamily}`;
+            ctx.textBaseline = "top";
 
-// =====================================================================
-// 5. RUN‑LENGTH RASTERIZER (fast horizontal drawing)
-// =====================================================================
-function render() {
-    ctx.fillStyle = CFG.colorBg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+            const shoreY = Math.floor(H * CFG.shorelineRatio);
+            const pierX = Math.floor(W * CFG.pierXRatio);
+            const pierLength = Math.floor(H * CFG.pierLengthRatio);
 
-    ctx.font = `${CFG.fontSize}px ${CFG.fontFamily}`;
-    ctx.textBaseline = "top";
+            for (let y = 0; y < H; y++) {
+                const cRow = current[y];
+                const isSand = y < shoreY;
+                let runString = "", runColor = "", runStartX = 0;
 
-    const shoreY = Math.floor(H * CFG.shorelineRatio);
-    const pierX = Math.floor(W * CFG.pierXRatio);
-    const pierLength = Math.floor(H * CFG.pierLengthRatio);
+                for (let x = 0; x < W; x++) {
+                    let char = "∷", color = CFG.colorWater;
+                    if (x === pierX && y < pierLength && y % 3 === 0) {
+                        char = "⊗"; color = CFG.colorPier;
+                    } else {
+                        const v = cRow[x];
+                        const normalized = Math.max(-1, Math.min(1, v / 6));
+                        let idx = Math.floor(Math.pow(Math.abs(normalized), 0.65) * (chars.length - 1));
+                        idx = Math.max(0, Math.min(idx, chars.length - 1));
+                        char = chars[idx];
 
-    for (let y = 0; y < H; y++) {
-        const cRow = current[y];
-        const isSand = y < shoreY;
+                        if (isSand) {
+                            if (v > 1.2) { color = CFG.colorFoam; char = "◌"; }
+                            else if (v > 0.2) { color = CFG.colorWetSand; char = "░"; }
+                            else { color = CFG.colorDrySand; char = "░"; }
+                        } else {
+                            if (v > 2.5) color = CFG.colorFoam;
+                            else if (v > 0.3 || v < -0.3) color = CFG.colorRipple;
+                            else { color = CFG.colorWater; if (idx === 2) char = "∙"; }
+                        }
+                    }
 
-        let runString = "";
-        let runColor = "";
-        let runStartX = 0;
-
-        for (let x = 0; x < W; x++) {
-            let char = "∷";
-            let color = CFG.colorWater;
-
-            if (x === pierX && y < pierLength && y % 3 === 0) {
-                char = "⊗";
-                color = CFG.colorPier;
-            } else {
-                const v = cRow[x];
-                const normalized = Math.max(-1, Math.min(1, v / 6));
-                let idx = Math.floor(
-                    Math.pow(Math.abs(normalized), 0.65) * (chars.length - 1)
-                );
-                if (idx < 0) idx = 0;
-                if (idx > chars.length - 1) idx = chars.length - 1;
-                char = chars[idx];
-
-                if (isSand) {
-                    if (v > 1.2)       { color = CFG.colorFoam;    char = "◌"; }
-                    else if (v > 0.2)  { color = CFG.colorWetSand; char = "░"; }
-                    else               { color = CFG.colorDrySand; char = "░"; }
-                } else {
-                    if (v > 2.5)                 { color = CFG.colorFoam; }
-                    else if (v > 0.3 || v < -0.3){ color = CFG.colorRipple; }
+                    if (x === 0) { runColor = color; runString = char; runStartX = 0; }
+                    else if (color === runColor) { runString += char; }
                     else {
-                        color = CFG.colorWater;
-                        if (idx === 2) char = "∙";
+                        ctx.fillStyle = runColor;
+                        ctx.fillText(runString, runStartX * charW, y * charH);
+                        runColor = color;
+                        runString = char;
+                        runStartX = x;
                     }
                 }
-            }
-
-            // Run‑length encoding by colour
-            if (x === 0) {
-                runColor = color;
-                runString = char;
-                runStartX = 0;
-            } else if (color === runColor) {
-                runString += char;
-            } else {
-                ctx.fillStyle = runColor;
-                ctx.fillText(runString, runStartX * charW, y * charH);
-                runColor = color;
-                runString = char;
-                runStartX = x;
+                if (runString.length > 0) {
+                    ctx.fillStyle = runColor;
+                    ctx.fillText(runString, runStartX * charW, y * charH);
+                }
             }
         }
 
-        // Commit the last run of the row
-        if (runString.length > 0) {
-            ctx.fillStyle = runColor;
-            ctx.fillText(runString, runStartX * charW, y * charH);
+        function animate() {
+            if (Math.random() < CFG.rainIntensity) {
+                const rx = Math.floor(Math.random() * (W - 2)) + 1;
+                const ry = Math.floor(Math.random() * (H - 2)) + 1;
+                if (ry > Math.floor(H * CFG.shorelineRatio) + 1) current[ry][rx] = 16;
+            }
+            ripple();
+            render();
+            requestAnimationFrame(animate);
         }
-    }
-}
 
-// =====================================================================
-// 6. ANIMATION & INTERACTION
-// =====================================================================
-function animate() {
-    // Random rain drops
-    if (Math.random() < CFG.rainIntensity) {
-        const rx = Math.floor(Math.random() * (W - 2)) + 1;
-        const ry = Math.floor(Math.random() * (H - 2)) + 1;
-        if (ry > Math.floor(H * CFG.shorelineRatio) + 1) {
-            current[ry][rx] = 16;
-        }
-    }
-
-    ripple();
-    render();
-    requestAnimationFrame(animate);
-}
-
-function splash(cx, cy) {
-    const radius = 3;
-    for (let y = -radius; y <= radius; y++) {
-        const py = cy + y;
-        if (py <= 0 || py >= H - 1) continue;
-        const cRow = current[py];
-        for (let x = -radius; x <= radius; x++) {
-            const px = cx + x;
-            if (px > 0 && px < W - 1) {
-                cRow[px] = 4;
+        function splash(cx, cy) {
+            const radius = 3;
+            for (let y = -radius; y <= radius; y++) {
+                const py = cy + y;
+                if (py <= 0 || py >= H - 1) continue;
+                const cRow = current[py];
+                for (let x = -radius; x <= radius; x++) {
+                    const px = cx + x;
+                    if (px > 0 && px < W - 1) cRow[px] = 4;
+                }
             }
         }
-    }
-}
 
-function getGridCoords(e) {
-    return {
-        x: Math.floor(e.clientX / window.innerWidth * W),
-        y: Math.floor(e.clientY / window.innerHeight * H)
-    };
-}
+        function getGridCoords(e) {
+            return {
+                x: Math.floor(e.clientX / window.innerWidth * W),
+                y: Math.floor(e.clientY / window.innerHeight * H)
+            };
+        }
 
-document.addEventListener("pointerdown", e => {
-    const { x, y } = getGridCoords(e);
-    splash(x, y);
-});
+        canvas.addEventListener('pointerdown', e => {
+            const { x, y } = getGridCoords(e);
+            splash(x, y);
+        });
 
-document.addEventListener("pointermove", e => {
-    if (e.buttons) {
-        const { x, y } = getGridCoords(e);
-        splash(x, y);
-    }
-});
+        canvas.addEventListener('pointermove', e => {
+            if (e.buttons) {
+                const { x, y } = getGridCoords(e);
+                splash(x, y);
+            }
+        });
 
-window.addEventListener("resize", resize);
-
-// Start the simulation
-animate();
-</script>
+        window.addEventListener('resize', resize);
+        animate();
+    </script>
 </body>
 </html>
