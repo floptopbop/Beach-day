@@ -207,12 +207,12 @@ function updateBearEvent() {
                 const pRow = previous[y], nRow = nextBuffer[y];
                 const fRow = foam[y];
                 const isSand = y < shoreY;
-                const divisor = isSand ? 3.8 : 2.2;
-                const damping = isSand ? 0.44 : 0.96;
+                const divisor = isSand ? 5  : 2.01;
+                const damping = isSand ? .5 : 0.989;
 
                 for (let x = 1; x < W - 1; x++) {
                     // Obstacle architecture: Static structural boundary layer
-                    if (x === pierX && y < pierLength && y % 3 === 0) {
+                    if (x === pierX && y < pierLength && y % 9 === 0) {
                         nRow[x] = 0;
                         // Side currents crashing into the piling convert horizontal force to foam
                         if (Math.abs(cRow[x-1]) > 0.2 || Math.abs(cRow[x+1]) > 0.2) {
@@ -227,24 +227,24 @@ function updateBearEvent() {
                     // --- FOAM INJECTION MODULE ---
                     // Compute absolute structural velocity delta between steps to find breaking crests
                     const delta = Math.abs(val - cRow[x]);
-                    if (delta > 0.8) {
+                    if (delta > 0.9) {
                         fRow[x] += delta * 0.4;
                     }
                     
                     // Natural breaks along the flat shallow sand profile
-                    if (isSand && val > 0.5) {
+                    if (isSand && val > 0.6) {
                         fRow[x] += 0.3;
                     }
 
                     // Persistent decay timeline (Deepwater foam glides; sand layer dampens fast)
-                    fRow[x] *= isSand ? 0.6 : 0.992; 
+                    fRow[x] *= isSand ? .99 : 0.8; 
                     if (fRow[x] < 0.05) fRow[x] = 0;
 
                     // Edge dampening math
                     if (!isSand && (x < 6 || x > W - 6 || y > H - 6)) {
                         const edgeX = Math.min(x, W - 1 - x), edgeY = Math.min(y, H - 1 - y);
                         const closestEdge = Math.min(edgeX, edgeY);
-                        if (closestEdge < 8) val *= (0.85 + (closestEdge / 6) * 0.15);
+                        if (closestEdge < 8) val *= (0.6 + (closestEdge / 8) * 0.15);
                     }
                     nRow[x] = val;
                 }
