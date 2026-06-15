@@ -237,7 +237,7 @@ function updateBearEvent() {
                     }
 
                     // Persistent decay timeline (Deepwater foam glides; sand layer dampens fast)
-                    fRow[x] *= isSand ? 0.58 : 0.98; 
+                    fRow[x] *= isSand ? 0.6 : 0.992; 
                     if (fRow[x] < 0.05) fRow[x] = 0;
 
                     // Edge dampening math
